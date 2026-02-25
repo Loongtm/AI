@@ -1,0 +1,72 @@
+//@version=5
+strategy("AI Entry + TP/SL Assistant", overlay=true, initial_capital=10000, pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.03)
+
+// === Inputs ===
+fastLen      = input.int(20, "Fast EMA", minval=1)
+slowLen      = input.int(50, "Slow EMA", minval=1)
+rsiLen       = input.int(14, "RSI Length", minval=1)
+rsiLongMin   = input.int(52, "RSI Min For Long", minval=1, maxval=100)
+rsiShortMax  = input.int(48, "RSI Max For Short", minval=1, maxval=100)
+atrLen       = input.int(14, "ATR Length", minval=1)
+slATR        = input.float(1.2, "SL ATR Multiplier", minval=0.1, step=0.1)
+tp1RR        = input.float(1.2, "TP1 Risk:Reward", minval=0.1, step=0.1)
+tp2RR        = input.float(2.0, "TP2 Risk:Reward", minval=0.1, step=0.1)
+useSession   = input.bool(false, "Use Session Filter")
+sessionInput = input.session("0000-2359", "Allowed Session")
+
+// === Core signals ===
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+atrVal  = ta.atr(atrLen)
+
+inSession = not useSession or not na(time(timeframe.period, sessionInput))
+trendUp   = emaFast > emaSlow
+trendDown = emaFast < emaSlow
+
+longSignal  = inSession and trendUp and ta.crossover(close, emaFast) and rsiVal > rsiLongMin
+shortSignal = inSession and trendDown and ta.crossunder(close, emaFast) and rsiVal < rsiShortMax
+
+// === Dynamic levels ===
+longEntry = close
+longSL    = longEntry - atrVal * slATR
+longRisk  = longEntry - longSL
+longTP1   = longEntry + longRisk * tp1RR
+longTP2   = longEntry + longRisk * tp2RR
+
+shortEntry = close
+shortSL    = shortEntry + atrVal * slATR
+shortRisk  = shortSL - shortEntry
+shortTP1   = shortEntry - shortRisk * tp1RR
+shortTP2   = shortEntry - shortRisk * tp2RR
+
+// === Orders ===
+if longSignal and strategy.position_size <= 0
+    strategy.entry("LONG", strategy.long)
+    strategy.exit("LONG-TP1", from_entry="LONG", stop=longSL, limit=longTP1, qty_percent=50)
+    strategy.exit("LONG-TP2", from_entry="LONG", stop=longSL, limit=longTP2)
+
+if shortSignal and strategy.position_size >= 0
+    strategy.entry("SHORT", strategy.short)
+    strategy.exit("SHORT-TP1", from_entry="SHORT", stop=shortSL, limit=shortTP1, qty_percent=50)
+    strategy.exit("SHORT-TP2", from_entry="SHORT", stop=shortSL, limit=shortTP2)
+
+// === Visuals ===
+plot(emaFast, "EMA Fast", color=color.aqua, linewidth=2)
+plot(emaSlow, "EMA Slow", color=color.orange, linewidth=2)
+
+plotshape(longSignal,  title="BUY",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="BUY")
+plotshape(shortSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0),   textcolor=color.white, text="SELL")
+
+var label sigLabel = na
+if longSignal
+    label.delete(sigLabel)
+    sigLabel := label.new(bar_index, low, "BUY\nENTRY: " + str.tostring(longEntry, format.mintick) + "\nSL: " + str.tostring(longSL, format.mintick) + "\nTP1: " + str.tostring(longTP1, format.mintick) + "\nTP2: " + str.tostring(longTP2, format.mintick), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 25), size=size.normal)
+
+if shortSignal
+    label.delete(sigLabel)
+    sigLabel := label.new(bar_index, high, "SELL\nENTRY: " + str.tostring(shortEntry, format.mintick) + "\nSL: " + str.tostring(shortSL, format.mintick) + "\nTP1: " + str.tostring(shortTP1, format.mintick) + "\nTP2: " + str.tostring(shortTP2, format.mintick), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 25), size=size.normal)
+
+// === Alerts ===
+alertcondition(longSignal, "Long setup", "LONG setup. Entry={{close}}")
+alertcondition(shortSignal, "Short setup", "SHORT setup. Entry={{close}}")
